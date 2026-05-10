@@ -23,6 +23,7 @@ from tqdm import tqdm
 from .lichess_pieces import available_styles, load_piece_set
 from .render_board import RenderConfig, augment, render_board_image
 from .positions import sample_board
+from .tilt import axis_aligned_bbox, random_tilt
 
 _PIECE_SETS: list[dict[str, str]] = []  # populated by generate()
 
@@ -126,18 +127,35 @@ def make_page(min_boards: int = 1, max_boards: int = 12) -> tuple[Image.Image, l
         cw, ch = cx1 - cx0, cy1 - cy0
         size = max(120, min(cw, ch) - random.randint(8, 30))
         board_img = _render_one_board(size)
-        # Random offset within cell.
-        ox = cx0 + random.randint(0, max(0, cw - size))
-        oy = cy0 + random.randint(0, max(0, ch - size))
-        bx = (ox, oy, ox + size, oy + size)
+
+        # 50% of boards stay upright, 50% get a random rotation/skew so the
+        # detector learns tilted boards too.
+        if random.random() < 0.5:
+            tilted, _corners = random_tilt(board_img, max_rot=12.0, max_skew=0.06)
+        else:
+            tilted, _corners = random_tilt(board_img, max_rot=1.5, max_skew=0.01)
+        tw, th = tilted.size
+
+        # Random offset within cell — some cells are smaller than the tilted
+        # board (which grows to fit its bounding box); shrink in that case.
+        if tw > cw or th > ch:
+            scale = min(cw / tw, ch / th)
+            tw, th = int(tw * scale), int(th * scale)
+            tilted = tilted.resize((tw, th), Image.BICUBIC)
+        ox = cx0 + random.randint(0, max(0, cw - tw))
+        oy = cy0 + random.randint(0, max(0, ch - th))
+        bx = (ox, oy, ox + tw, oy + th)
         if not _try_place(placed, bx):
             continue
-        page.paste(board_img, (ox, oy))
+        # tilted is RGBA — alpha is 0 outside the rotated quad, so the page
+        # background shows through cleanly (no white halo for YOLO/refiner to
+        # latch onto).
+        page.paste(tilted, (ox, oy), mask=tilted)
         placed.append(bx)
-        cx = (ox + size / 2) / page_w
-        cy = (oy + size / 2) / page_h
-        bw = size / page_w
-        bh = size / page_h
+        cx = (ox + tw / 2) / page_w
+        cy = (oy + th / 2) / page_h
+        bw = tw / page_w
+        bh = th / page_h
         bboxes_norm.append((cx, cy, bw, bh))
 
     # Page-level aug: slight blur, JPEG compression.

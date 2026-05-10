@@ -22,14 +22,22 @@ from .board_detect import BoardDetector
 from .classify_squares import PieceClassifier
 from .fen import constrain_predictions, symbols_to_fen
 from .pdf_to_pages import render_pdf
-from .refine_corners import refine_to_inner_board
+from .refine_corners import find_board_corners, rectify_board
 
 
-def _draw_overlay(page: Image.Image, boxes: list[tuple[int, int, int, int, float]]) -> Image.Image:
+def _draw_overlay(
+    page: Image.Image,
+    boxes: list[tuple[int, int, int, int, float]],
+    corners_per_box: list | None = None,
+) -> Image.Image:
     out = page.copy()
     draw = ImageDraw.Draw(out)
     for i, (x0, y0, x1, y1, conf) in enumerate(boxes):
-        draw.rectangle([x0, y0, x1, y1], outline=(255, 0, 0), width=4)
+        draw.rectangle([x0, y0, x1, y1], outline=(255, 0, 0), width=3)
+        if corners_per_box is not None and i < len(corners_per_box) and corners_per_box[i] is not None:
+            quad = corners_per_box[i]
+            pts = [(float(p[0]), float(p[1])) for p in quad]
+            draw.polygon(pts, outline=(0, 200, 0), width=3)
         draw.text((x0 + 4, y0 + 4), f"#{i} {conf:.2f}", fill=(255, 0, 0))
     return out
 
@@ -70,14 +78,16 @@ def run(args: argparse.Namespace) -> None:
         boxes = detector.detect(page)
         boxes.sort(key=lambda b: (b[1] // 50, b[0]))  # reading order: rows then cols
 
-        overlay = _draw_overlay(page, boxes)
+        # Detect corners up-front so we can draw both bbox and quad on the overlay.
+        corners_per_box = [find_board_corners(page, (x0, y0, x1, y1)) for (x0, y0, x1, y1, _) in boxes]
+        overlay = _draw_overlay(page, boxes, corners_per_box)
         overlay_path = out_root / f"page_{page_idx:03d}_overlay.jpg"
         overlay.save(overlay_path, quality=85)
 
         page_entry = {"page": page_idx, "boards": []}
         for j, (x0, y0, x1, y1, conf) in enumerate(boxes):
-            inner = refine_to_inner_board(page, (x0, y0, x1, y1))
-            board_crop = page.crop(inner)
+            corners = corners_per_box[j]
+            board_crop = rectify_board(page, corners, out_size=args.rectify_size)
             board_path = out_root / f"page_{page_idx:03d}_board_{j:02d}.jpg"
             board_crop.save(board_path, quality=92)
 
@@ -96,7 +106,7 @@ def run(args: argparse.Namespace) -> None:
                 {
                     "index": j,
                     "yolo_bbox": [x0, y0, x1, y1],
-                    "refined_bbox": list(inner),
+                    "corners": corners.tolist(),
                     "yolo_conf": conf,
                     "fen": fen,
                     "raw_fen": raw_fen,
@@ -121,6 +131,7 @@ def main() -> None:
     ap.add_argument("--det-imgsz", type=int, default=1280)
     ap.add_argument("--pages", type=int, nargs=2, default=None, help="start end (exclusive)")
     ap.add_argument("--device", type=str, default=None)
+    ap.add_argument("--rectify-size", type=int, default=384, help="upright square size after perspective rectify")
     args = ap.parse_args()
     run(args)
 

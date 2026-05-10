@@ -99,16 +99,49 @@ def download_styles(out_dir: Path, styles: list[str] | None = None) -> dict[str,
     return counts
 
 
-_INNER_RE = re.compile(r"<svg[^>]*>(.*)</svg>", re.DOTALL | re.IGNORECASE)
+_OUTER_SVG_RE = re.compile(r"<svg([^>]*)>(.*)</svg>", re.DOTALL | re.IGNORECASE)
+_VIEWBOX_RE = re.compile(r'viewBox\s*=\s*"([^"]+)"', re.IGNORECASE)
+_WIDTH_RE = re.compile(r'\bwidth\s*=\s*"([^"]+)"', re.IGNORECASE)
+_HEIGHT_RE = re.compile(r'\bheight\s*=\s*"([^"]+)"', re.IGNORECASE)
 
 
-def _extract_inner(svg_text: str) -> str:
-    """Strip the root <svg> wrapper, returning everything inside."""
-    m = _INNER_RE.search(svg_text)
+def _parse_dim(s: str) -> float | None:
+    s = s.strip().rstrip("px").strip()
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def _extract_inner_and_viewbox(svg_text: str) -> tuple[str, tuple[float, float, float, float]]:
+    """Strip the root <svg> wrapper, returning (inner_content, viewBox).
+
+    viewBox is (min_x, min_y, w, h). Falls back to width/height attributes,
+    then to 45x45 (the Lichess convention for cburnett).
+    """
+    m = _OUTER_SVG_RE.search(svg_text)
     if not m:
-        # Defensive: some SVGs are just a <g> already.
-        return svg_text
-    return m.group(1)
+        return svg_text, (0.0, 0.0, 45.0, 45.0)
+    attrs, inner = m.group(1), m.group(2)
+
+    vb_m = _VIEWBOX_RE.search(attrs)
+    if vb_m:
+        parts = vb_m.group(1).replace(",", " ").split()
+        if len(parts) == 4:
+            try:
+                vb = tuple(float(x) for x in parts)
+                return inner, vb
+            except ValueError:
+                pass
+
+    w_m = _WIDTH_RE.search(attrs)
+    h_m = _HEIGHT_RE.search(attrs)
+    w = _parse_dim(w_m.group(1)) if w_m else None
+    h = _parse_dim(h_m.group(1)) if h_m else None
+    if w is not None and h is not None:
+        return inner, (0.0, 0.0, w, h)
+
+    return inner, (0.0, 0.0, 45.0, 45.0)
 
 
 def available_styles(root: Path) -> list[str]:
@@ -123,7 +156,11 @@ def available_styles(root: Path) -> list[str]:
 
 
 def load_piece_set(root: Path, style: str) -> dict[str, str]:
-    """Return {symbol -> inner SVG} for a style.
+    """Return {symbol -> ready-to-embed SVG fragment} for a style.
+
+    Each fragment is a self-contained `<svg width="45" height="45" viewBox=...>`
+    so it renders at exactly one square regardless of the source style's
+    native viewBox (Lichess pieces vary: 45x45, 48x48, 50x50, etc).
 
     Symbol uses python-chess convention: uppercase=white, lowercase=black.
     """
@@ -132,8 +169,16 @@ def load_piece_set(root: Path, style: str) -> dict[str, str]:
     for piece in PIECE_FILES:
         fp = sdir / f"{piece}.svg"
         text = fp.read_text(encoding="utf-8", errors="ignore")
+        inner, vb = _extract_inner_and_viewbox(text)
         sym = piece[1] if piece[0] == "w" else piece[1].lower()
-        pieces[sym] = _extract_inner(text)
+        # Wrap in an <svg> with explicit width=height=45 and the original viewBox
+        # so any internal coords scale into a single square.
+        pieces[sym] = (
+            f'<svg width="45" height="45" '
+            f'viewBox="{vb[0]} {vb[1]} {vb[2]} {vb[3]}" '
+            f'preserveAspectRatio="xMidYMid meet" '
+            f'overflow="visible">{inner}</svg>'
+        )
     return pieces
 
 

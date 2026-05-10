@@ -110,6 +110,9 @@ def build_board_svg(
                 continue
             x = margin + c * SQUARE
             y = margin + r * SQUARE
+            # `inner` is now a self-contained <svg width=45 height=45 ...>.
+            # Position it via <g transform=translate>: nested <svg x=..> doesn't
+            # always honour x/y reliably across renderers.
             parts.append(f'<g transform="translate({x},{y})">{inner}</g>')
 
     parts.append("</svg>")

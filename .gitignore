@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+*.so
+.eggs/
+build/
+dist/
+.Python
+.pytest_cache/
+.coverage
+.mypy_cache/
+.ruff_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Project artefacts (generated)
+data/
+runs/
+
+# Pretrained / downloaded weights
+*.pt
+*.onnx
+*.engine
+yolo*.pt
+
+# Logs
+*.log

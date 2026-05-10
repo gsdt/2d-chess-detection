@@ -42,8 +42,30 @@ def _build_css(palette: dict[str, str]) -> str:
     )
 
 
-def render_board_image(board: chess.Board, cfg: RenderConfig | None = None) -> Image.Image:
+def render_board_image(
+    board: chess.Board,
+    cfg: RenderConfig | None = None,
+    piece_set: dict[str, str] | None = None,
+) -> Image.Image:
+    """Render a 2D chess board to PIL.
+
+    If `piece_set` (a dict[symbol -> inner SVG]) is given, the custom renderer
+    composes squares + pieces from arbitrary Lichess SVG sets. Otherwise we
+    fall back to python-chess's built-in cburnett style.
+    """
     cfg = cfg or RenderConfig()
+    if piece_set is not None:
+        from .render_custom import CustomRenderConfig, render_board_image_custom
+
+        ccfg = CustomRenderConfig(
+            size=cfg.size,
+            coords=cfg.coords,
+            flipped=cfg.flipped,
+            palette_idx=cfg.palette_idx,
+            border=cfg.border,
+        )
+        return render_board_image_custom(board, piece_set, ccfg)
+
     palette = PALETTES[cfg.palette_idx if cfg.palette_idx is not None else random.randrange(len(PALETTES))]
     svg = chess.svg.board(
         board,

@@ -20,8 +20,11 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 from tqdm import tqdm
 
+from .lichess_pieces import available_styles, load_piece_set
 from .render_board import RenderConfig, augment, render_board_image
 from .positions import sample_board
+
+_PIECE_SETS: list[dict[str, str]] = []  # populated by generate()
 
 
 PAGE_SIZES = [(900, 1270), (1100, 1500), (820, 1160)]  # roughly book pages
@@ -101,7 +104,8 @@ def _render_one_board(target_size: int) -> Image.Image:
         border=random.random() < 0.85,
     )
     board = sample_board()
-    img = render_board_image(board, cfg)
+    piece_set = random.choice(_PIECE_SETS) if _PIECE_SETS else None
+    img = render_board_image(board, cfg, piece_set=piece_set)
     img = augment(img, intensity=0.6)  # light, full-page aug applied later
     return img
 
@@ -152,9 +156,25 @@ def write_yaml(root: Path) -> None:
     (root / "data.yaml").write_text(yaml)
 
 
-def generate(out_dir: Path, n_pages: int, val_frac: float = 0.1, seed: int = 0) -> None:
+def generate(
+    out_dir: Path,
+    n_pages: int,
+    val_frac: float = 0.1,
+    seed: int = 0,
+    piece_sets_dir: Path | None = None,
+) -> None:
     random.seed(seed)
     np.random.seed(seed)
+
+    global _PIECE_SETS
+    _PIECE_SETS = []
+    if piece_sets_dir is not None:
+        styles = available_styles(piece_sets_dir)
+        print(f"loaded {len(styles)} piece styles from {piece_sets_dir}: {styles}")
+        _PIECE_SETS = [load_piece_set(piece_sets_dir, s) for s in styles]
+    if not _PIECE_SETS:
+        print("no piece sets found — falling back to python-chess cburnett only")
+
     for split in ("train", "val"):
         (out_dir / "images" / split).mkdir(parents=True, exist_ok=True)
         (out_dir / "labels" / split).mkdir(parents=True, exist_ok=True)
@@ -177,8 +197,9 @@ def main() -> None:
     ap.add_argument("--pages", type=int, default=400)
     ap.add_argument("--val-frac", type=float, default=0.1)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--piece-sets", type=Path, default=Path("data/piece_sets"))
     args = ap.parse_args()
-    generate(args.out, args.pages, args.val_frac, args.seed)
+    generate(args.out, args.pages, args.val_frac, args.seed, piece_sets_dir=args.piece_sets)
 
 
 if __name__ == "__main__":

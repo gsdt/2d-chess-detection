@@ -19,6 +19,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
+from .lichess_pieces import available_styles, load_piece_set
 from .render_board import (
     IDX_TO_LABEL,
     LABEL_TO_IDX,
@@ -49,9 +50,18 @@ def ensure_dirs(root: Path) -> None:
             (root / split / _safe_dirname(label)).mkdir(parents=True, exist_ok=True)
 
 
-def generate(out_dir: Path, n_boards: int, val_frac: float = 0.1, seed: int = 0) -> None:
+def generate(out_dir: Path, n_boards: int, val_frac: float = 0.1, seed: int = 0, piece_sets_dir: Path | None = None) -> None:
     random.seed(seed)
     ensure_dirs(out_dir)
+
+    # Load all available Lichess piece sets — we'll randomly pick one per board.
+    piece_sets: list[dict[str, str]] = []
+    if piece_sets_dir is not None:
+        styles = available_styles(piece_sets_dir)
+        print(f"loaded {len(styles)} piece styles from {piece_sets_dir}: {styles}")
+        piece_sets = [load_piece_set(piece_sets_dir, s) for s in styles]
+    if not piece_sets:
+        print("no piece sets found — falling back to python-chess cburnett only")
 
     sizes = [256, 320, 384, 448]
 
@@ -64,7 +74,8 @@ def generate(out_dir: Path, n_boards: int, val_frac: float = 0.1, seed: int = 0)
             border=random.random() < 0.8,
         )
         board = sample_board()
-        img = render_board_image(board, cfg)
+        piece_set = random.choice(piece_sets) if piece_sets else None
+        img = render_board_image(board, cfg, piece_set=piece_set)
         img = augment(img)
         box = get_inner_board_box(cfg)
         crops = crop_squares(img, box)
@@ -88,8 +99,9 @@ def main() -> None:
     ap.add_argument("--boards", type=int, default=2000)
     ap.add_argument("--val-frac", type=float, default=0.1)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--piece-sets", type=Path, default=Path("data/piece_sets"))
     args = ap.parse_args()
-    generate(args.out, args.boards, args.val_frac, args.seed)
+    generate(args.out, args.boards, args.val_frac, args.seed, piece_sets_dir=args.piece_sets)
 
 
 if __name__ == "__main__":
